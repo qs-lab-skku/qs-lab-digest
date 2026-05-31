@@ -188,30 +188,64 @@ PROMPT = """당신은 2D 양자소재 연구실(QS Lab, 성균관대)의 논문 
 저자: {authors}
 초록: {abstract}
 
-아래 형식의 JSON만 출력하세요 (설명·마크다운 없이, 중괄호로 시작해 끝):
+[출력 형식] 먼저 아래 JSON을 출력하고, 다음 줄에 정확히 ===SVG=== 한 줄을 쓴 뒤, 그 아래에 SVG 한 개만 출력하세요.
+
+JSON (설명·마크다운 없이, 중괄호로 시작해 끝):
 {{
   "title_ko": "한글 제목 한 줄",
-  "summary": "3~4문장 한글 요약",
+  "summary": "4~5문장의 충실한 한글 요약 (배경 -> 방법 -> 핵심 결과 -> 의미 순서)",
   "points": ["핵심 발견 1", "핵심 발견 2", "핵심 발견 3"],
-  "relevance": "QS Lab(2D 합성·강유전 게이팅·위상초전도·양자방출체) 관점에서 왜 중요한지 한 줄",
-  "concepts": [{{"term": "개념(영문)", "desc": "한 줄 설명"}}, {{"term": "개념2", "desc": "한 줄 설명"}}],
-  "idea": "이 논문에서 출발할 수 있는 연구 아이디어 한 줄"
-}}"""
+  "relevance": "QS Lab(2D 합성·강유전 게이팅·위상초전도·양자방출체) 관점에서 왜 중요한지 1~2문장",
+  "concepts": [
+    {{"term": "개념(영문 병기)", "desc": "원리까지 2~3문장으로 설명"}},
+    {{"term": "개념2", "desc": "2~3문장 설명"}},
+    {{"term": "개념3", "desc": "2~3문장 설명"}}
+  ],
+  "idea": "이 논문에서 출발할 수 있는 구체적 연구 아이디어 1~2문장"
+}}
+
+===SVG===
+규칙: 논문의 핵심 아이디어/메커니즘을 보여주는 개념 모식도 1개.
+- 반드시 한 줄로 출력하고, 모든 속성값은 작은따옴표(')로 감쌀 것.
+- viewBox는 '0 0 600 320'. 한글 라벨, 글자 font-size 14~20.
+- 사용 가능한 요소: rect, line, circle, ellipse, polyline, polygon, text 만.
+- 절대 금지: path, defs, marker, style, script, image, foreignObject, use.
+- 색: 글자 #1c1b19, 선/테두리는 #2b3a63 또는 #2f6f5e 또는 #7a3526, 채움은 옅게 #eef0f6 / #e6efe9 / #f4e7e2 / #fffdf8.
+- 요소 15개 이내로 단순하고 읽기 쉽게. 화살표는 작은 polygon 삼각형으로.
+- 예: <svg viewBox='0 0 600 320' xmlns='http://www.w3.org/2000/svg'><rect x='20' y='30' width='160' height='60' fill='#eef0f6' stroke='#2b3a63'/><text x='100' y='66' font-size='16' text-anchor='middle' fill='#1c1b19'>입력</text></svg>"""
 
 
 def analyze(client, p):
     msg = client.messages.create(
-        model=MODEL, max_tokens=1500,
+        model=MODEL, max_tokens=2500,
         messages=[{"role": "user", "content": PROMPT.format(
             title=p["title"], authors=", ".join(p["authors"][:8]), abstract=p["abstract"])}],
     )
     text = msg.content[0].text
-    s, e = text.find("{"), text.rfind("}")
-    return json.loads(text[s:e + 1])
+    jpart, spart = text.split("===SVG===", 1) if "===SVG===" in text else (text, text)
+    s, e = jpart.find("{"), jpart.rfind("}")
+    data = json.loads(jpart[s:e + 1])
+    return data, clean_svg(spart)
 
 
 def esc(x):
     return html.escape(str(x))
+
+
+def clean_svg(text):
+    """모델이 만든 SVG에서 <svg>…</svg>만 추출. 위험 요소가 있거나 너무 크면 버린다(빈 문자열)."""
+    if not text:
+        return ""
+    m = re.search(r"<svg.*?</svg>", text, re.S)
+    if not m:
+        return ""
+    svg = m.group(0)
+    low = svg.lower()
+    bad = ["<script", "javascript:", "onload", "onerror", "onclick",
+           "<foreignobject", "<iframe", "<image", "<use"]
+    if any(b in low for b in bad) or len(svg) > 9000:
+        return ""
+    return svg
 
 
 HEAD = """<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -239,8 +273,12 @@ header{border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:22px
 .rel b{color:var(--sc)}
 .idea{background:#f4e7e2;border-left:3px solid var(--ox);border-radius:0 8px 8px 0;padding:9px 13px;margin:10px 0;font-size:15px}
 .idea b{color:var(--ox)}
-details{margin:8px 0;font-size:14px}
-summary{cursor:pointer;font-family:"IBM Plex Sans",sans-serif;font-weight:600;color:var(--accent)}
+.schem{margin:14px 0;background:#fffdf8;border:1px solid var(--rule);border-radius:8px;padding:10px}
+.schem svg{width:100%;height:auto;display:block}
+.schem figcaption{font-family:"IBM Plex Sans",sans-serif;font-size:11px;color:var(--muted);margin-top:6px;text-align:center}
+.cinfo{font-family:"Gowun Batang",serif;font-weight:700;font-size:15px;margin:14px 0 4px}
+.concept{font-size:14.5px;margin:7px 0;line-height:1.58}
+.concept b{color:var(--accent)}
 .link{font-family:"IBM Plex Sans",sans-serif;font-size:13px;color:var(--accent)}
 .arch{list-style:none;padding:0}.arch li{border-bottom:1px solid var(--rule);padding:11px 2px}
 .arch a{font-family:"IBM Plex Sans",sans-serif;color:var(--accent);text-decoration:none;font-size:16px}
@@ -251,10 +289,13 @@ BADGE_CLASS = {"T1": "b1", "T1-OA": "b1oa", "T2": "b2", "Review": "brev",
                "Journal": "bj", "Preprint": "bpre"}
 
 
-def card_html(p, a):
+def card_html(p, a, svg):
     pts  = "".join(f"<li>{esc(x)}</li>" for x in a.get("points", []))
-    cons = "".join(f'<li><b>{esc(c.get("term",""))}</b> — {esc(c.get("desc",""))}</li>'
+    cons = "".join(f'<div class="concept"><b>{esc(c.get("term",""))}</b> — {esc(c.get("desc",""))}</div>'
                    for c in a.get("concepts", []))
+    fig  = (f'<figure class="schem">{svg}'
+            f'<figcaption>AI 개념 모식도 — 초록 기반 자동 생성(논문 원본 Figure 아님)</figcaption></figure>'
+            if svg else "")
     cls  = BADGE_CLASS.get(p["tier"], "bj")
     date = f' · {esc(p["date"])}' if p.get("date") else ""
     return f"""<article class="card">
@@ -264,8 +305,10 @@ def card_html(p, a):
   <div class="auth">{esc(", ".join(p["authors"][:6]))}</div>
   <p>{esc(a.get("summary",""))}</p>
   <ul>{pts}</ul>
+  {fig}
+  <div class="cinfo">개념 정리</div>
+  {cons}
   <div class="rel"><b>QS Lab 관점</b> · {esc(a.get("relevance",""))}</div>
-  <details><summary>개념 정리</summary><ul>{cons}</ul></details>
   <div class="idea"><b>아이디어</b> · {esc(a.get("idea",""))}</div>
   <a class="link" href="{esc(p["url"])}" target="_blank">원문 ↗</a>
 </article>"""
@@ -296,7 +339,8 @@ def main():
     for p in papers:
         try:
             print(f"  분석[{p['tier']}]:", p["title"][:55])
-            cards.append(card_html(p, analyze(client, p)))
+            data, svg = analyze(client, p)
+            cards.append(card_html(p, data, svg))
         except Exception as err:
             print("  (건너뜀)", err)
 
