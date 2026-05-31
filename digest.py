@@ -108,55 +108,66 @@ def _get_json(url):
         return json.loads(resp.read().decode())
 
 
-def search_s2():
-    """Semantic Scholar에서 최근 출판된 관련 저널 논문. 실패하면 빈 목록(=arXiv만 사용)."""
+def _abstract_from_inverted(inv):
+    """OpenAlex는 초록을 단어:위치 형태로 주므로 원래 문장으로 복원."""
+    if not inv:
+        return ""
+    pos = {}
+    for word, idxs in inv.items():
+        for i in idxs:
+            pos[i] = word
+    return " ".join(pos[i] for i in sorted(pos))
+
+
+def search_openalex():
+    """OpenAlex에서 최근 출판된 관련 저널 논문. 키 불필요. 실패하면 빈 목록(=arXiv만 사용)."""
     try:
-        fields = ("title,abstract,authors,venue,publicationVenue,"
-                  "year,publicationDate,externalIds,url")
-        query = ("2D van der Waals quantum material superconductor topological "
+        since = (datetime.date.today() - datetime.timedelta(days=JOURNAL_DAYS)).isoformat()
+        query = ("2D van der Waals quantum materials superconductor topological "
                  "ferroelectric single-photon emitter")
-        url = "https://api.semanticscholar.org/graph/v1/paper/search?" + urllib.parse.urlencode(
-            {"query": query, "fields": fields, "limit": 40})
+        params = {
+            "search": query,
+            "filter": f"from_publication_date:{since},type:article",
+            "sort": "publication_date:desc",
+            "per-page": 40,
+        }
+        url = "https://api.openalex.org/works?" + urllib.parse.urlencode(params)
         data = None
-        for _ in range(2):                       # 가벼운 재시도 (속도제한 대비)
+        for _ in range(2):                       # 가벼운 재시도
             try:
                 data = _get_json(url); break
             except Exception as e:
-                print("  S2 재시도:", e); time.sleep(3)
+                print("  OpenAlex 재시도:", e); time.sleep(3)
         if not data:
             return []
-        cutoff = datetime.date.today() - datetime.timedelta(days=JOURNAL_DAYS)
+        results = data.get("results", [])
+        print(f"  OpenAlex 응답 {len(results)}건")
         out = []
-        for p in data.get("data", []):
-            venue = ((p.get("publicationVenue") or {}).get("name")) or p.get("venue") or ""
+        for w in results:
+            src = (w.get("primary_location") or {}).get("source") or {}
+            venue = src.get("display_name") or ""
             if not venue or "arxiv" in venue.lower():
-                continue                         # 프리프린트/무명 venue는 arXiv 쪽에서 처리
-            title = p.get("title") or ""
-            abstract = p.get("abstract") or ""
-            if relevance(title + " " + abstract) < 1:
-                continue                         # 주제와 무관하면 제외
-            pdate = p.get("publicationDate") or ""
-            try:
-                if pdate and datetime.date.fromisoformat(pdate) < cutoff:
-                    continue                     # 너무 오래된 출판본 제외
-            except Exception:
-                pass
-            ext = p.get("externalIds") or {}
+                continue                         # 프리프린트/무명 venue 제외
+            title = w.get("title") or w.get("display_name") or ""
+            if not title:
+                continue
+            doi = (w.get("doi") or "").replace("https://doi.org/", "") or None
             tier, weight = tier_of(venue)
             out.append({
                 "title": title,
-                "authors": [a.get("name", "") for a in (p.get("authors") or [])],
-                "abstract": abstract,
-                "url": p.get("url") or (f"https://doi.org/{ext.get('DOI')}" if ext.get("DOI") else ""),
-                "date": pdate,
+                "authors": [(a.get("author") or {}).get("display_name", "")
+                            for a in (w.get("authorships") or [])],
+                "abstract": _abstract_from_inverted(w.get("abstract_inverted_index")),
+                "url": w.get("doi") or (w.get("ids") or {}).get("openalex") or "",
+                "date": w.get("publication_date") or "",
                 "venue": venue,
                 "tier": tier, "weight": weight,
-                "doi": ext.get("DOI"),
-                "arxiv_id": ext.get("ArXiv"),
+                "doi": doi,
+                "arxiv_id": None,
             })
         return out
     except Exception as e:
-        print("  S2 검색 실패(무시):", e)
+        print("  OpenAlex 검색 실패(무시):", e)
         return []
 
 
@@ -271,9 +282,9 @@ def page(title, datelabel, body):
 def main():
     OUT_DIR.mkdir(exist_ok=True)
     print("arXiv 검색…");            arx = search_arxiv(); print(f"  arXiv {len(arx)}편")
-    print("Semantic Scholar 검색…"); s2  = search_s2();    print(f"  S2(저널) {len(s2)}편")
+    print("OpenAlex(저널) 검색…");   jr  = search_openalex(); print(f"  저널(OpenAlex) {len(jr)}편")
 
-    papers = dedupe(arx + s2)
+    papers = dedupe(arx + jr)
     papers.sort(key=lambda p: (p["weight"],
                                relevance(p["title"] + " " + p["abstract"]),
                                p.get("date", "")), reverse=True)
