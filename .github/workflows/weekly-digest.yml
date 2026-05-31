@@ -1,0 +1,35 @@
+name: Weekly Paper Digest
+
+on:
+  workflow_dispatch:          # 버튼으로 수동 실행 (지금 단계)
+  # schedule:
+  #   - cron: "0 0 * * 1"     # (나중에) 매주 월요일 09:00 KST 자동 실행
+
+permissions:
+  contents: write             # 생성된 파일을 저장소에 커밋하려면 필요
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install libraries
+        run: pip install arxiv anthropic
+
+      - name: Generate digest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python digest.py
+
+      - name: Commit results
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Weekly digest $(date +%Y-%m-%d)" || echo "No changes to commit"
+          git push
